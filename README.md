@@ -1,3 +1,5 @@
+**This is a fork of the no longer maintained source{d} CI used to keep some build scripts alive**
+
 # source{d} CI
 
 This project contains the common CI configuration for all source{d} Go projects, including the following functionalities:
