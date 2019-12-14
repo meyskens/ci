@@ -2,6 +2,7 @@
 PROJECT ?=
 COMMANDS ?=
 DEPENDENCIES ?=
+TEST_RACE ?=
 
 # Default shell
 SHELL := /bin/bash
@@ -19,6 +20,9 @@ DOCKER_PASSWORD ?=
 # When `make docker-push`, setting DOCKER_PUSH_LATEST to any non-empty value
 # will cause make docker-push to also push the latest tag.
 DOCKER_PUSH_LATEST ?=
+# When `make docker-push`, setting DOCKER_PUSH_MASTER to any non-empty value
+# will cause make docker-push to also push when on the master branch.
+DOCKER_PUSH_MASTER ?=
 # Docker OS/Arch used to match the right binaries.
 # If docker is not installed, fallback to GOOS/GOARCH.
 ifneq ($(shell which docker),)
@@ -61,6 +65,9 @@ ifeq ($(DRONE_BUILD_EVENT), tag)
 	VERSION := $(DRONE_TAG)
 endif
 
+# IS_RELEASE is "true" if tag is semantic version and not a pre-release
+IS_RELEASE := $(shell echo $(VERSION) | grep -q -E '^v[[:digit:]]+\.[[:digit:]]+\.[[:digit:]]+$$' && echo "true" || true)
+
 # Packages content
 PKG_OS ?= darwin linux
 PKG_ARCH = amd64
@@ -73,6 +80,7 @@ GO_TAGS ?=
 GO_GET_ARGS ?= -v -t
 GO_TEST_ARGS ?= -v
 GO_BUILD_ARGS ?= -ldflags "$(LD_FLAGS)"
+GOPROXY ?= https://proxy.golang.org
 # Environment variable to use at `go build` calls.
 GO_BUILD_ENV ?=
 
@@ -84,9 +92,9 @@ ifneq ($(GO_TAGS), )
 endif
 
 GOCMD = go
-GOGET = $(GOCMD) get $(GO_GET_ARGS)
-GOBUILD = $(GOCMD) build $(GO_BUILD_ARGS)
-GOTEST = $(GOCMD) test $(GO_TEST_ARGS)
+GOGET = GOPROXY=$(GOPROXY) $(GOCMD) get $(GO_GET_ARGS)
+GOBUILD = GOPROXY=$(GOPROXY) $(GOCMD) build $(GO_BUILD_ARGS)
+GOTEST = GOPROXY=$(GOPROXY) $(GOCMD) test $(GO_TEST_ARGS)
 GOTEST_RACE = $(GOTEST) -race
 GOCLEAN = $(GOCMD) clean
 
@@ -103,13 +111,17 @@ COVERAGE_MODE = atomic
 PACKAGES = $(shell go list ./... | grep -v '/vendor/')
 
 # Helm deployment information
-HELM_VERSION ?= v2.8.2
+HELM_VERSION ?= v2.14.1
 HELM_DEPLOY_SCRIPT ?= https://raw.githubusercontent.com/src-d/ci/v1/scripts/helm-deploy.sh
 HELM_RELEASE ?=
 HELM_CHART ?=
 K8S_NAMESPACE ?= default
 K8S_SERVICE_ACCOUNT ?= default
 HELM_ARGS ?=
+
+# Python index update
+PYTHON_INDEX_SIGNATURE ?= Infrastructure Team <infrastructure@sourced.tech>
+PYTHON_INDEX_NAME ?= src-d/python-package-index
 
 # Rules
 
@@ -125,7 +137,11 @@ test:
 	$(GOTEST) $(PACKAGES)
 
 test-race:
-	$(GOTEST_RACE) $(PACKAGES)
+	if [ -z "$(TEST_RACE)" ]; then \
+		echo -e "\033[0;31mWARNING! Testing with race detection is disabled, please consider toggling it on setting TEST_RACE ?= true"; \
+	else \
+		$(GOTEST_RACE) $(PACKAGES); \
+	fi; \
 
 test-coverage:
 	echo "" > $(COVERAGE_REPORT); \
@@ -192,11 +208,11 @@ docker-build: $(COMMANDS)
 	for d in $(DOCKERFILES); do \
 		dockerfile=`echo $${d} | cut -d":" -f 1`; \
 		repository=`echo $${d} | cut -d":" -f 2`; \
-		docker build -t $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$${repository}:$(VERSION) -f $$dockerfile .; \
+		docker build --pull -t $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$${repository}:$(VERSION) -f $$dockerfile .; \
 	done;
 
 docker-push: docker-login docker-build
-	@if [ "$(BRANCH)" == "master" ]; then \
+	@if [ "$(BRANCH)" == "master" && "$(DOCKER_PUSH_MASTER)" == "" ]; then \
 		echo "docker-push is disabled on master branch" \
 		exit 1; \
 	fi; \
@@ -210,6 +226,9 @@ docker-push: docker-login docker-build
 			docker push $(DOCKER_REGISTRY)/$(DOCKER_ORG)/$${repository}:latest; \
 		fi; \
 	done;
+
+docker-push-latest-release:
+	@DOCKER_PUSH_LATEST=$(IS_RELEASE) make docker-push
 
 packages: build
 	@cd $(BUILD_PATH); \
@@ -231,6 +250,8 @@ no-changes-in-commit:
 		git status --untracked-files=normal --porcelain; \
 		echo >&2 "generated assets are out of sync"; \
 		exit 2; \
+	else \
+		echo there is nothing pending to be commited; \
 	fi
 
 godep:
@@ -254,10 +275,10 @@ ci-install: | prepare-services dependencies
 	@echo
 
 ifeq ($($strip $(COMMANDS)),)
-ci-script: | test-coverage codecov
+ci-script: | test-coverage codecov test-race
 	@echo
 else
-ci-script: | test-coverage codecov packages
+ci-script: | test-coverage codecov test-race packages
 	@echo
 endif
 
@@ -275,6 +296,21 @@ deploy: install-helm
 	chmod +x $${HELM_DEPLOY}; \
 	$${HELM_DEPLOY} $(HELM_RELEASE) $(HELM_CHART) $(K8S_NAMESPACE) $(K8S_SERVICE_ACCOUNT) $(HELM_ARGS)
 
+install-python-indexer:
+	pip3 install --user pypi-on-github-indexer
+
+update-python-index: install-python-indexer
+	@if [ -n "$(TRAVIS_TAG)" ]; then \
+		python3 -m pypi_on_github_indexer --signature "$(PYTHON_INDEX_SIGNATURE)" \
+						  --github-token "$(GITHUB_TOKEN)" \
+						  --index-name "$(PYTHON_INDEX_NAME)" \
+						  --repo-url "https://github.com/$(TRAVIS_SLUG)" \
+						  --repo-tag "$(TRAVIS_TAG)"; \
+	else \
+		echo "This action is only currently supported while tagging in Travis CI"; \
+		exit 1; \
+	fi
+
 .PHONY: dependencies $(DEPENDENCIES) \
 		build $(COMMANDS) \
 		test test-race test-coverage \
@@ -284,4 +320,6 @@ deploy: install-helm
 		no-changes-in-commit \
 		prepare-services \
 		ci-script ci-install \
+		update-python-index \
+		install-python-indexer \
 		install-helm deploy
