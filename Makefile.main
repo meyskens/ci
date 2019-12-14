@@ -12,7 +12,7 @@ DOCKERFILES ?= Dockerfile:$(PROJECT)
 # Docker registry where the docker image should be pushed to.
 DOCKER_REGISTRY ?= docker.io
 # Docker organization to be used at the docker image name.
-DOCKER_ORG ?= srcd
+DOCKER_ORG ?= maartje
 # Username used to login on the docker registry.
 DOCKER_USERNAME ?=
 # Password used to login on the docker registry.
@@ -112,7 +112,7 @@ PACKAGES = $(shell go list ./... | grep -v '/vendor/')
 
 # Helm deployment information
 HELM_VERSION ?= v2.14.1
-HELM_DEPLOY_SCRIPT ?= https://raw.githubusercontent.com/src-d/ci/v1/scripts/helm-deploy.sh
+HELM_DEPLOY_SCRIPT ?= https://raw.githubusercontent.com/meyskens/ci/v1/scripts/helm-deploy.sh
 HELM_RELEASE ?=
 HELM_CHART ?=
 K8S_NAMESPACE ?= default
