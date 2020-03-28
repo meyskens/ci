@@ -111,7 +111,7 @@ COVERAGE_MODE = atomic
 PACKAGES = $(shell go list ./... | grep -v '/vendor/')
 
 # Helm deployment information
-HELM_VERSION ?= v2.14.1
+HELM_VERSION ?= v3.1.2
 HELM_DEPLOY_SCRIPT ?= https://raw.githubusercontent.com/meyskens/ci/v1/scripts/helm-deploy.sh
 HELM_RELEASE ?=
 HELM_CHART ?=

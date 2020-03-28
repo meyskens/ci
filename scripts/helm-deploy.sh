@@ -53,5 +53,5 @@ users:
 EOF
 
 export KUBECONFIG
-helm init --client-only
+helm init
 helm upgrade "$RELEASE" "$CHART" --install $HELM_ARGS
